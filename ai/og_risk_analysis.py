@@ -11,7 +11,7 @@ import opengradient as og
 load_dotenv()
 logger = logging.getLogger("walletguard.ai.og_risk_analysis")
 
-# Verified constants from your local SDK
+# Use the TEE specific constant to ensure the node accepts the request
 OG_LLM_MODEL = og.TEE_LLM.GEMINI_2_5_FLASH_LITE
 OG_EXPLORER_URL = "https://explorer.opengradient.ai/tx"
 
@@ -39,6 +39,8 @@ class OGRiskAnalyzer:
             if not private_key:
                 logger.error("❌ No OG private key found.")
                 return None
+            
+            # Removed Hub email/password to force strict Web3 Wallet x402 payments
             return og.Client(private_key=private_key)
         except Exception as exc:
             logger.error("❌ OpenGradient init failed: %s", exc)
@@ -56,33 +58,28 @@ class OGRiskAnalyzer:
             {"role": "user", "content": prompt},
         ]
 
-        # --- THE FIX ---
         if not self._approval_checked:
             try:
                 logger.info("Setting OpenGradient token allowance ceiling...")
-                # 1. Approve 10 OPG to pass the max-cost pre-flight check safely.
-                # The gateway will STILL ONLY DEDUCT the tiny actual cost (e.g., 0.05 OPG).
-                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=10)
-                
-                # 2. CRITICAL: Wait 5 seconds for the blockchain to mine the approval.
+                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=5.0)
                 logger.info("Waiting 5 seconds for blockchain to mine approval...")
                 await asyncio.sleep(5) 
-                
                 self._approval_checked = True
                 logger.info("✅ OpenGradient token allowance verified and mined.")
             except Exception as e:
                 logger.warning("⚠️ Could not verify OPG token approval: %s", e)
-        # ---------------
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
+                # THE FIX: Explicitly set max_tokens=300 to bypass the massive escrow check!
                 response = await asyncio.to_thread(
                     self.client.llm.chat,
                     model=OG_LLM_MODEL,
-                    messages=messages
+                    messages=messages,
+                    max_tokens=300
                 )
 
                 if not response or not hasattr(response, 'chat_output') or not response.chat_output:
