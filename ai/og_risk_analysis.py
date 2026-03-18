@@ -3,7 +3,7 @@ import json
 import logging
 import os
 from pathlib import Path
-from typing import Any  # <-- This was the missing 'Any'
+from typing import Any
 
 from dotenv import load_dotenv
 import opengradient as og 
@@ -31,6 +31,7 @@ def _load_private_key() -> str:
 class OGRiskAnalyzer:
     def __init__(self):
         self.client = self._init_sdk()
+        self._approval_checked = False # Tracks if we've already approved the token spend
 
     def _init_sdk(self):
         try:
@@ -54,6 +55,19 @@ class OGRiskAnalyzer:
             {"role": "system", "content": "You are a blockchain security expert. Explain wallet risks for a non-technical user."},
             {"role": "user", "content": prompt},
         ]
+
+        # --- THE FIX: APPROVE OPG TOKENS ---
+        # The x402 gateway needs permission to pull the fee from your wallet.
+        if not self._approval_checked:
+            try:
+                logger.info("Checking OpenGradient token allowance (Approving x402 Gateway)...")
+                # This checks Permit2 allowance. It ONLY sends a transaction if allowance is < 10.
+                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=10)
+                self._approval_checked = True
+                logger.info("✅ OpenGradient token allowance verified.")
+            except Exception as e:
+                logger.warning("⚠️ Could not verify OPG token approval. Inference may fail: %s", e)
+        # -----------------------------------
 
         max_retries = 3
         for attempt in range(max_retries):
