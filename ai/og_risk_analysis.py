@@ -12,7 +12,7 @@ load_dotenv()
 logger = logging.getLogger("walletguard.ai.og_risk_analysis")
 
 # Verified constants from your local SDK
-OG_LLM_MODEL = og.TEE_LLM.GEMINI_2_5_FLASH
+OG_LLM_MODEL = og.TEE_LLM.GEMINI_2_5_FLASH_LITE
 OG_EXPLORER_URL = "https://explorer.opengradient.ai/tx"
 
 def _load_private_key() -> str:
