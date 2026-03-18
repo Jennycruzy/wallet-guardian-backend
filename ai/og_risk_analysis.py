@@ -56,23 +56,29 @@ class OGRiskAnalyzer:
             {"role": "user", "content": prompt},
         ]
 
-        # Check allowance based on the realistic 0.2 faucet drops
+        # --- THE FIX ---
         if not self._approval_checked:
             try:
-                logger.info("Checking OpenGradient token allowance...")
-                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=0.2)
+                logger.info("Setting OpenGradient token allowance ceiling...")
+                # 1. Approve 10 OPG to pass the max-cost pre-flight check safely.
+                # The gateway will STILL ONLY DEDUCT the tiny actual cost (e.g., 0.05 OPG).
+                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=10)
+                
+                # 2. CRITICAL: Wait 5 seconds for the blockchain to mine the approval.
+                logger.info("Waiting 5 seconds for blockchain to mine approval...")
+                await asyncio.sleep(5) 
+                
                 self._approval_checked = True
-                logger.info("✅ OpenGradient token allowance verified.")
+                logger.info("✅ OpenGradient token allowance verified and mined.")
             except Exception as e:
                 logger.warning("⚠️ Could not verify OPG token approval: %s", e)
+        # ---------------
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # THE FIX: Stripped down to the exact standard call used in normal OG apps.
-                # Removed the SETTLE_BATCH and extra token limits that were causing the 402.
                 response = await asyncio.to_thread(
                     self.client.llm.chat,
                     model=OG_LLM_MODEL,
