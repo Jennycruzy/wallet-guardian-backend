@@ -31,7 +31,7 @@ def _load_private_key() -> str:
 class OGRiskAnalyzer:
     def __init__(self):
         self.client = self._init_sdk()
-        self._approval_checked = False # Tracks if we've already approved the token spend
+        self._approval_checked = False
 
     def _init_sdk(self):
         try:
@@ -56,37 +56,32 @@ class OGRiskAnalyzer:
             {"role": "user", "content": prompt},
         ]
 
-        # --- THE FIX: APPROVE OPG TOKENS ---
-        # The x402 gateway needs permission to pull the fee from your wallet.
+        # Check allowance based on the realistic 0.2 faucet drops
         if not self._approval_checked:
             try:
-                logger.info("Checking OpenGradient token allowance (Approving x402 Gateway)...")
-                # This checks Permit2 allowance. It ONLY sends a transaction if allowance is < 10.
-                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=10)
+                logger.info("Checking OpenGradient token allowance...")
+                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=0.2)
                 self._approval_checked = True
                 logger.info("✅ OpenGradient token allowance verified.")
             except Exception as e:
-                logger.warning("⚠️ Could not verify OPG token approval. Inference may fail: %s", e)
-        # -----------------------------------
+                logger.warning("⚠️ Could not verify OPG token approval: %s", e)
 
         max_retries = 3
         for attempt in range(max_retries):
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
+                # THE FIX: Stripped down to the exact standard call used in normal OG apps.
+                # Removed the SETTLE_BATCH and extra token limits that were causing the 402.
                 response = await asyncio.to_thread(
                     self.client.llm.chat,
                     model=OG_LLM_MODEL,
-                    messages=messages,
-                    max_tokens=512,
-                    temperature=0.0,
-                    x402_settlement_mode=og.x402SettlementMode.SETTLE_BATCH 
+                    messages=messages
                 )
 
                 if not response or not hasattr(response, 'chat_output') or not response.chat_output:
                     raise ValueError("TEE node returned an empty response.")
 
-                # Handle the "external" or missing hash safely
                 tx_hash = getattr(response, "transaction_hash", None)
                 
                 if not tx_hash or tx_hash == "external":
@@ -111,7 +106,7 @@ class OGRiskAnalyzer:
             except Exception as exc:
                 if "500" in str(exc) or "Internal Server Error" in str(exc):
                     wait = 2 ** attempt
-                    logger.warning("⚠️ TEE node busy/failed. Retry %d/%d in %ds", attempt + 1, max_retries, wait)
+                    logger.warning("⚠️ TEE node busy. Retry %d/%d in %ds", attempt + 1, max_retries, wait)
                     await asyncio.sleep(wait)
                     continue
                 
