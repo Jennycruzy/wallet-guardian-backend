@@ -15,7 +15,6 @@ OG_LLM_MODEL = os.getenv("OPENGRADIENT_LLM_MODEL", "meta-llama/Llama-3-8b-chat-h
 OG_EXPLORER_URL = "https://explorer.opengradient.ai/tx"
 
 def _load_private_key() -> str:
-    """Load OG private key from ~/.opengradient_config.json then .env fallback."""
     config_path = Path.home() / ".opengradient_config.json"
     if config_path.exists():
         try:
@@ -34,10 +33,17 @@ class OGRiskAnalyzer:
 
     def _init_sdk(self):
         try:
+            # 🚨 THE FIX: Force Web3 (x402) Billing Mode 🚨
+            # By popping these out, we force the SDK to ignore your Hub account
+            # and strictly use the 0.3 OPG in your Web3 Wallet.
+            os.environ.pop("OPENGRADIENT_EMAIL", None)
+            os.environ.pop("OPENGRADIENT_PASSWORD", None)
+
             private_key = _load_private_key()
             if not private_key:
                 logger.error("❌ No OG private key found.")
                 return None
+            
             return og.Client(private_key=private_key)
         except Exception as exc:
             logger.error("❌ OpenGradient init failed: %s", exc)
@@ -57,9 +63,8 @@ class OGRiskAnalyzer:
 
         if not self._approval_checked:
             try:
-                # Minimum approval just to ensure the Permit2 channel is open
                 await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=0.5)
-                await asyncio.sleep(3) 
+                await asyncio.sleep(2) 
                 self._approval_checked = True
             except Exception as e:
                 logger.warning("⚠️ Could not verify OPG token approval: %s", e)
@@ -69,12 +74,10 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # 🚨 THE FIX: Explicitly disable on-chain settlement to bypass gas limits!
                 response = await asyncio.to_thread(
                     self.client.llm.chat,
                     model=OG_LLM_MODEL,
                     messages=messages,
-                    max_tokens=300,
                     x402_settlement_mode=og.x402SettlementMode.PRIVATE
                 )
 
@@ -103,13 +106,22 @@ class OGRiskAnalyzer:
                 }
 
             except Exception as exc:
+                # 🚨 THE X-RAY DEBUGER 🚨
+                # This catches the exact JSON response from the Gateway
+                error_details = ""
+                if hasattr(exc, "response") and exc.response is not None:
+                    try:
+                        error_details = f" | API Reply: {exc.response.text}"
+                    except Exception:
+                        pass
+
                 if "500" in str(exc) or "Internal Server Error" in str(exc):
                     wait = 2 ** attempt
                     logger.warning("⚠️ TEE node busy. Retry %d/%d in %ds", attempt + 1, max_retries, wait)
                     await asyncio.sleep(wait)
                     continue
                 
-                logger.error("❌ OG Inference Error: %s", exc)
+                logger.error("❌ OG Inference Error: %s%s", exc, error_details)
                 break
 
         return self._fallback_explain(risk_score, risk_signals)
