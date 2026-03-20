@@ -33,16 +33,16 @@ class OGRiskAnalyzer:
 
     def _init_sdk(self):
         try:
-            # Force Web3 (x402) Billing Mode 
-            os.environ.pop("OPENGRADIENT_EMAIL", None)
-            os.environ.pop("OPENGRADIENT_PASSWORD", None)
-
             private_key = _load_private_key()
+            email = os.getenv("OPENGRADIENT_EMAIL")
+            password = os.getenv("OPENGRADIENT_PASSWORD")
+
             if not private_key:
                 logger.error("❌ No OG private key found.")
                 return None
             
-            return og.Client(private_key=private_key)
+            # Reinstating the fully authenticated client profile
+            return og.Client(private_key=private_key, email=email, password=password)
         except Exception as exc:
             logger.error("❌ OpenGradient init failed: %s", exc)
             return None
@@ -61,7 +61,8 @@ class OGRiskAnalyzer:
 
         if not self._approval_checked:
             try:
-                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=0.5)
+                # 🚨 FIX 1: The SDK requires an integer to successfully open the Permit2 channel.
+                self.client.llm.ensure_opg_approval(opg_amount=2)
                 await asyncio.sleep(2) 
                 self._approval_checked = True
             except Exception as e:
@@ -72,12 +73,13 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # Max tokens capped to keep escrow fee low
-                response = await asyncio.to_thread(
-                    self.client.llm.chat,
+                # 🚨 FIX 2 & 3: Directly awaiting the async native method and 
+                # explicitly passing the required BATCH_HASHED settlement state.
+                response = await self.client.llm.chat(
                     model=OG_LLM_MODEL,
                     messages=messages,
-                    max_tokens=300
+                    max_tokens=300,
+                    x402_settlement_mode=og.x402SettlementMode.BATCH_HASHED
                 )
 
                 if not response or not hasattr(response, 'chat_output') or not response.chat_output:
@@ -124,7 +126,6 @@ class OGRiskAnalyzer:
         return self._fallback_explain(risk_score, risk_signals)
 
     def _build_prompt(self, risk_score: int, risk_signals: list[dict], timeline_events: list[dict]) -> str:
-        # THE FIX IS HERE: The line is now complete and will not throw a SyntaxError.
         risk_label = "CRITICAL" if risk_score < 30 else "HIGH" if risk_score < 50 else "MEDIUM" if risk_score < 70 else "LOW"
         signal_lines = "\n".join(f"- [{s.get('severity','?').upper()}] {s.get('description','')}" for s in risk_signals) or "None detected."
         return f"Wallet Risk Score: {risk_score}/100 ({risk_label} RISK)\n\nSignals:\n{signal_lines}\n\nExplain clearly."
