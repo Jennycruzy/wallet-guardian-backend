@@ -11,7 +11,6 @@ import opengradient as og
 load_dotenv()
 logger = logging.getLogger("walletguard.ai.og_risk_analysis")
 
-# THE FIX: ACTUALLY use Llama-3 this time!
 OG_LLM_MODEL = os.getenv("OPENGRADIENT_LLM_MODEL", "meta-llama/Llama-3-8b-chat-hf")
 OG_EXPLORER_URL = "https://explorer.opengradient.ai/tx"
 
@@ -58,13 +57,10 @@ class OGRiskAnalyzer:
 
         if not self._approval_checked:
             try:
-                logger.info("Setting OpenGradient token allowance ceiling...")
-                # Safe ceiling that won't revert a 0.3 balance check
-                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=2.0)
-                logger.info("Waiting 5 seconds for blockchain to mine approval...")
-                await asyncio.sleep(5) 
+                # Minimum approval just to ensure the Permit2 channel is open
+                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=0.5)
+                await asyncio.sleep(3) 
                 self._approval_checked = True
-                logger.info("✅ OpenGradient token allowance verified and mined.")
             except Exception as e:
                 logger.warning("⚠️ Could not verify OPG token approval: %s", e)
 
@@ -73,12 +69,13 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # THE FIX: Llama-3 + max_tokens cap
+                # 🚨 THE FIX: Explicitly disable on-chain settlement to bypass gas limits!
                 response = await asyncio.to_thread(
                     self.client.llm.chat,
                     model=OG_LLM_MODEL,
                     messages=messages,
-                    max_tokens=300
+                    max_tokens=300,
+                    x402_settlement_mode=og.x402SettlementMode.PRIVATE
                 )
 
                 if not response or not hasattr(response, 'chat_output') or not response.chat_output:
