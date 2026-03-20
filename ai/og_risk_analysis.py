@@ -33,8 +33,7 @@ class OGRiskAnalyzer:
 
     def _init_sdk(self):
         try:
-            # 🚨 THE FIX: Force Web3 (x402) Billing Mode 
-            # This ensures it uses your 0.3 OPG and ignores empty Hub credits.
+            # Force Web3 (x402) Billing Mode 
             os.environ.pop("OPENGRADIENT_EMAIL", None)
             os.environ.pop("OPENGRADIENT_PASSWORD", None)
 
@@ -73,9 +72,7 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # 🚨 THE FINAL FIX: 
-                # max_tokens=300 keeps the escrow fee extremely low.
-                # Removed the broken PRIVATE mode that caused the local SDK crash.
+                # Max tokens capped to keep escrow fee low
                 response = await asyncio.to_thread(
                     self.client.llm.chat,
                     model=OG_LLM_MODEL,
@@ -127,4 +124,15 @@ class OGRiskAnalyzer:
         return self._fallback_explain(risk_score, risk_signals)
 
     def _build_prompt(self, risk_score: int, risk_signals: list[dict], timeline_events: list[dict]) -> str:
-        risk_label = "CRITICAL" if risk_score < 30 else "HIGH" if risk_score < 50 else "MEDIUM" if risk_score
+        # THE FIX IS HERE: The line is now complete and will not throw a SyntaxError.
+        risk_label = "CRITICAL" if risk_score < 30 else "HIGH" if risk_score < 50 else "MEDIUM" if risk_score < 70 else "LOW"
+        signal_lines = "\n".join(f"- [{s.get('severity','?').upper()}] {s.get('description','')}" for s in risk_signals) or "None detected."
+        return f"Wallet Risk Score: {risk_score}/100 ({risk_label} RISK)\n\nSignals:\n{signal_lines}\n\nExplain clearly."
+
+    @staticmethod
+    def _fallback_explain(risk_score: int, risk_signals: list[dict]) -> dict[str, Any]:
+        return {
+            "explanation": f"Note: AI analysis is offline. Your risk score is {risk_score}/100.",
+            "verifiableProof": None,
+            "teeEnabled": False,
+        }
