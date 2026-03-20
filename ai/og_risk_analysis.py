@@ -11,8 +11,8 @@ import opengradient as og
 load_dotenv()
 logger = logging.getLogger("walletguard.ai.og_risk_analysis")
 
-# Use the TEE specific constant to ensure the node accepts the request
-OG_LLM_MODEL = og.TEE_LLM.GEMINI_2_5_FLASH_LITE
+# THE FIX: ACTUALLY use Llama-3 this time!
+OG_LLM_MODEL = os.getenv("OPENGRADIENT_LLM_MODEL", "meta-llama/Llama-3-8b-chat-hf")
 OG_EXPLORER_URL = "https://explorer.opengradient.ai/tx"
 
 def _load_private_key() -> str:
@@ -39,8 +39,6 @@ class OGRiskAnalyzer:
             if not private_key:
                 logger.error("❌ No OG private key found.")
                 return None
-            
-            # Removed Hub email/password to force strict Web3 Wallet x402 payments
             return og.Client(private_key=private_key)
         except Exception as exc:
             logger.error("❌ OpenGradient init failed: %s", exc)
@@ -61,7 +59,8 @@ class OGRiskAnalyzer:
         if not self._approval_checked:
             try:
                 logger.info("Setting OpenGradient token allowance ceiling...")
-                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=5.0)
+                # Safe ceiling that won't revert a 0.3 balance check
+                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=2.0)
                 logger.info("Waiting 5 seconds for blockchain to mine approval...")
                 await asyncio.sleep(5) 
                 self._approval_checked = True
@@ -74,7 +73,7 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # THE FIX: Explicitly set max_tokens=300 to bypass the massive escrow check!
+                # THE FIX: Llama-3 + max_tokens cap
                 response = await asyncio.to_thread(
                     self.client.llm.chat,
                     model=OG_LLM_MODEL,
