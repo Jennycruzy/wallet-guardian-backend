@@ -34,7 +34,7 @@ class OGRiskAnalyzer:
     def _init_sdk(self):
         try:
             # 🚨 NUKE ALL HUB/FIREBASE AUTH VARIABLES 🚨
-            # This explicitly forces the SDK to use your Web3 wallet and your 2 OPG tokens.
+            # Forcing strict Web3 payments so your 2 OPG balance is utilized.
             os.environ.pop("OPENGRADIENT_EMAIL", None)
             os.environ.pop("OPENGRADIENT_PASSWORD", None)
             os.environ.pop("FIREBASE_API_KEY", None)
@@ -44,7 +44,6 @@ class OGRiskAnalyzer:
                 logger.error("❌ No OG private key found.")
                 return None
             
-            # Initialize strictly as a Web3 client! No email, no password.
             return og.Client(private_key=private_key)
         except Exception as exc:
             logger.error("❌ OpenGradient init failed: %s", exc)
@@ -64,7 +63,7 @@ class OGRiskAnalyzer:
 
         if not self._approval_checked:
             try:
-                # Integer allowance for Permit2 (2 OPG is perfect)
+                # Integer allowance for Permit2 gateway
                 self.client.llm.ensure_opg_approval(opg_amount=2)
                 await asyncio.sleep(2) 
                 self._approval_checked = True
@@ -76,12 +75,12 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # Directly await the async native method with BATCH_HASHED settlement
+                # 🚨 THE FINAL FIX: Removed the buggy x402_settlement_mode parameter entirely.
+                # It will default to its native behavior without crashing the Python SDK.
                 response = await self.client.llm.chat(
                     model=OG_LLM_MODEL,
                     messages=messages,
-                    max_tokens=300,
-                    x402_settlement_mode=og.x402SettlementMode.BATCH_HASHED
+                    max_tokens=300
                 )
 
                 if not response or not hasattr(response, 'chat_output') or not response.chat_output:
