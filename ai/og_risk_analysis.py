@@ -33,16 +33,19 @@ class OGRiskAnalyzer:
 
     def _init_sdk(self):
         try:
-            private_key = _load_private_key()
-            email = os.getenv("OPENGRADIENT_EMAIL")
-            password = os.getenv("OPENGRADIENT_PASSWORD")
+            # 🚨 NUKE ALL HUB/FIREBASE AUTH VARIABLES 🚨
+            # This explicitly forces the SDK to use your Web3 wallet and your 2 OPG tokens.
+            os.environ.pop("OPENGRADIENT_EMAIL", None)
+            os.environ.pop("OPENGRADIENT_PASSWORD", None)
+            os.environ.pop("FIREBASE_API_KEY", None)
 
+            private_key = _load_private_key()
             if not private_key:
                 logger.error("❌ No OG private key found.")
                 return None
             
-            # Reinstating the fully authenticated client profile
-            return og.Client(private_key=private_key, email=email, password=password)
+            # Initialize strictly as a Web3 client! No email, no password.
+            return og.Client(private_key=private_key)
         except Exception as exc:
             logger.error("❌ OpenGradient init failed: %s", exc)
             return None
@@ -61,7 +64,7 @@ class OGRiskAnalyzer:
 
         if not self._approval_checked:
             try:
-                # 🚨 FIX 1: The SDK requires an integer to successfully open the Permit2 channel.
+                # Integer allowance for Permit2 (2 OPG is perfect)
                 self.client.llm.ensure_opg_approval(opg_amount=2)
                 await asyncio.sleep(2) 
                 self._approval_checked = True
@@ -73,8 +76,7 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # 🚨 FIX 2 & 3: Directly awaiting the async native method and 
-                # explicitly passing the required BATCH_HASHED settlement state.
+                # Directly await the async native method with BATCH_HASHED settlement
                 response = await self.client.llm.chat(
                     model=OG_LLM_MODEL,
                     messages=messages,
