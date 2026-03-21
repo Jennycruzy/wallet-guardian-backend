@@ -7,6 +7,8 @@ from typing import Any
 
 from dotenv import load_dotenv
 import opengradient as og 
+from web3 import Web3
+from eth_account import Account
 
 load_dotenv()
 logger = logging.getLogger("walletguard.ai.og_risk_analysis")
@@ -33,17 +35,27 @@ class OGRiskAnalyzer:
 
     def _init_sdk(self):
         try:
-            # 🚨 NUKE ALL HUB/FIREBASE AUTH VARIABLES 🚨
-            # Forcing strict Web3 payments so your 2 OPG balance is utilized.
             os.environ.pop("OPENGRADIENT_EMAIL", None)
             os.environ.pop("OPENGRADIENT_PASSWORD", None)
             os.environ.pop("FIREBASE_API_KEY", None)
 
             private_key = _load_private_key()
+            relayer_key = os.getenv("OPENGRADIENT_ALPHA_PRIVATE_KEY", private_key)
+
             if not private_key:
                 logger.error("❌ No OG private key found.")
                 return None
             
+            # Update the addresses for auth using strict Web3 checksumming
+            # Ensures correct routing for the two roles: Identity (signer) and Relayer (gas payer)
+            identity_address = Web3.to_checksum_address(Account.from_key(private_key).address)
+            relayer_address = Web3.to_checksum_address(Account.from_key(relayer_key).address)
+            
+            logger.info(f"Auth Addresses Updated -> Identity: {identity_address} | Relayer: {relayer_address}")
+            
+            # Expose relayer to environment for the SDK's x402 payment routing
+            os.environ["OPENGRADIENT_RELAYER_PRIVATE_KEY"] = relayer_key
+
             return og.Client(private_key=private_key)
         except Exception as exc:
             logger.error("❌ OpenGradient init failed: %s", exc)
@@ -63,9 +75,12 @@ class OGRiskAnalyzer:
 
         if not self._approval_checked:
             try:
-                # Integer allowance for Permit2 gateway
-                self.client.llm.ensure_opg_approval(opg_amount=2)
-                await asyncio.sleep(2) 
+                logger.info("Setting OpenGradient token allowance...")
+                # The 2 OPG approval must be executed in a thread and given time to mine
+                await asyncio.to_thread(self.client.llm.ensure_opg_approval, opg_amount=2)
+                
+                logger.info("Waiting 5 seconds for blockchain to mine approval...")
+                await asyncio.sleep(5) 
                 self._approval_checked = True
             except Exception as e:
                 logger.warning("⚠️ Could not verify OPG token approval: %s", e)
@@ -75,9 +90,8 @@ class OGRiskAnalyzer:
             try:
                 logger.info("Calling OpenGradient (model=%s) - Attempt %d", OG_LLM_MODEL, attempt + 1)
                 
-                # 🚨 THE FINAL FIX: Removed the buggy x402_settlement_mode parameter entirely.
-                # It will default to its native behavior without crashing the Python SDK.
-                response = await self.client.llm.chat(
+                response = await asyncio.to_thread(
+                    self.client.llm.chat,
                     model=OG_LLM_MODEL,
                     messages=messages,
                     max_tokens=300
